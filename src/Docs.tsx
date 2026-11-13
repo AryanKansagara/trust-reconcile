@@ -43,7 +43,7 @@ export default function Docs() {
         </ol>
 
         <h2 id="clio">Clio Manage</h2>
-        <p>Report names below were checked against Clio’s help centre in November 2026 for US and Canadian accounts. Clio sometimes renames menu items and Australian accounts have a different set of trust reports, so if a label differs, look for the closest match.</p>
+        <p>Report names below follow Clio’s help centre for US and Canadian accounts. Clio sometimes renames menu items and Australian accounts have a different set of trust reports, so if a label differs, look for the closest match.</p>
         <h3>Trust journal: the trust ledger report</h3>
         <ol className="steps-list">
           <li>Go to <span className="ui">Reports</span>, then the <span className="ui">Client reports</span> section, and choose <span className="ui">Trust ledger report</span>.</li>
@@ -51,7 +51,7 @@ export default function Docs() {
           <li>Tick <span className="ui">Include opening balance</span> if you only export one month; the opening balance rows are recognised and never matched against the bank.</li>
           <li>Choose <span className="ui">CSV</span> as the output format, generate, and download it from the report history.</li>
         </ol>
-        <p>The CSV has <code>Date</code>, <code>Source/Destination</code>, <code>Payer/Payee</code>, <code>Matter</code>, <code>Description</code>, <code>Reference</code>, <code>Funds in</code>, <code>Funds out</code> and <code>Balance</code>. It is detected as “Clio Manage trust ledger report”. Client heading rows and subtotal rows are skipped and listed in the validation report.</p>
+        <p>Any file with <code>Funds in</code>, <code>Funds out</code> and <code>Matter</code> columns is detected as “Clio Manage trust ledger report”; the other columns (<code>Date</code>, <code>Client</code>, <code>Description</code>, <code>Reference</code>, <code>Source/Destination</code>, <code>Payer/Payee</code>) are matched by name. Clio lets you hide and reorder report columns, so if yours differ, map them by hand once during import. Title rows above the header, client heading rows and total rows are skipped and listed in the validation report.</p>
         <h3>Client balances: the trust listing report</h3>
         <ol className="steps-list">
           <li><span className="ui">Reports</span> → <span className="ui">Client reports</span> → <span className="ui">Trust listing report</span>.</li>
@@ -70,7 +70,7 @@ export default function Docs() {
           <li>Customise columns to include <code>Date</code>, <code>Transaction Type</code>, <code>Num</code>, <code>Name</code>, <code>Customer</code> (or <code>Customer:Job</code>), <code>Memo/Description</code>, <code>Split</code> and <code>Amount</code>.</li>
           <li>Export to Excel and save the sheet as CSV.</li>
         </ol>
-        <p><code>Customer:Job</code> values such as <code>Hale, Jordan:2026-014 Estate</code> are split into client and matter. For client balances, either export the trust liability account grouped by customer as of month end, or skip the third file and let the app derive balances from the journal.</p>
+        <p>The report’s title block, the account group row, <code>Total for …</code> rows and the <code>Accrual Basis</code> footer are skipped, so the file imports as exported. Each <code>Name</code> (customer or <code>Customer:Job</code>, such as <code>Hale, Jordan:2026-014 Estate</code>) is one client ledger; the part before the colon is shown as the client. Rows with no name (bank charges, transfers between the firm’s accounts) are account-level entries and show up as journal entries with no client. For client balances, either export the trust liability account grouped by customer as of month end, or skip the third file and let the app derive balances from the journal.</p>
 
         <h2 id="banks">Bank statements</h2>
         <p>Download the month as CSV or as OFX/QFX (often labelled Quicken, Money or Web Connect). OFX/QFX files carry the closing ledger balance, so the statement balance is filled in for you. With CSV, a running balance column does the same; otherwise type the opening and closing balance from the statement on the Tie-out tab.</p>
@@ -78,14 +78,17 @@ export default function Docs() {
           <thead><tr><th>Bank</th><th>Where</th><th>What we read</th></tr></thead>
           <tbody>
             <tr><th scope="row">Chase</th><td>Account activity → Download → CSV</td><td>Posting Date, Description, Amount, Check or Slip #, Balance</td></tr>
-            <tr><th scope="row">Bank of America</th><td>Download transactions → Microsoft Excel format (CSV)</td><td>Date, Description, Amount, Running Bal.</td></tr>
+            <tr><th scope="row">Bank of America</th><td>Download transactions → Microsoft Excel format (CSV)</td><td>Date, Description, Amount, Running Bal. The summary block above the header and the “Beginning balance” row are skipped.</td></tr>
+            <tr><th scope="row">Capital One</th><td>Download transactions → CSV</td><td>Transaction Date, Transaction Description, Transaction Amount (unsigned) with Transaction Type Debit or Credit, Balance</td></tr>
             <tr><th scope="row">Wells Fargo</th><td>Download account activity → Comma delimited</td><td>No header row: date, amount, *, check number, description</td></tr>
             <tr><th scope="row">RBC Royal Bank</th><td>Download transactions → Comma delimited</td><td>Transaction Date, Cheque Number, Description 1 and 2, CAD$ / USD$</td></tr>
             <tr><th scope="row">TD Canada Trust</th><td>Download → Spreadsheet (CSV)</td><td>No header row: date, description, withdrawal, deposit, balance</td></tr>
+            <tr><th scope="row">CIBC</th><td>Download transactions → Spreadsheet (CSV)</td><td>No header row: date, description, withdrawal, deposit</td></tr>
             <tr><th scope="row">Anything else</th><td>CSV, TSV, OFX or QFX</td><td>A date plus either a signed amount or debit and credit columns</td></tr>
           </tbody>
         </table>
-        <p className="muted small">Bank menus change often; the labels above are typical as of November 2026. Comma, tab, semicolon and pipe separators, quoted fields, parentheses negatives, trailing minus signs and DR/CR suffixes are all handled. Day-first dates (31/10/2026) are detected; tick the box during import if a file is ambiguous.</p>
+        <p className="muted small">Bank menus change often; the labels above are typical as of November 2026. Comma, tab, semicolon and pipe separators, quoted fields, parentheses negatives, trailing minus signs and DR/CR suffixes are all handled. Day-first dates (31/10/2026) are detected; tick the box during import if a file is ambiguous. Cheque numbers written into descriptions (<code>CHQ#01042</code>, <code>CHECK # 1042</code>) are used for cheque matching, and files saved in Windows-1252 rather than UTF-8 keep their accented names.</p>
+        <p className="muted small">The importer’s tests run on files laid out like each export above (hand-written, invented amounts) and on real OFX 1.02 files from the open-source <a href="https://github.com/jseutter/ofxparse">ofxparse</a> project (MIT licence). OFX names longer than 32 characters are taken from the memo, cheque number 0 is ignored, and a download that bundles several accounts is flagged.</p>
 
         <h2 id="formats">File formats</h2>
         <p>Columns are matched by name (case and spacing ignored). Anything that does not match can be mapped by hand during import. Every rejected line is listed with its line number and can be downloaded as a CSV.</p>

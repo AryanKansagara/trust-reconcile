@@ -318,7 +318,7 @@ function Compare({ a, b }: { a: Snapshot; b: Snapshot }) {
   const changed = matters.map(m => ({ m, client: (b.clients ?? a.clients ?? []).find(c => c.matter === m)?.client ?? '', from: bal(a, m), to: bal(b, m) })).filter(x => x.from !== x.to)
   return (
     <div className="grid-2">
-      <div>
+      <div className="table-wrap">
         <table className="data">
           <thead><tr><th /><th className="num">{fmtMonthShort(a.month)}</th><th className="num">{fmtMonthShort(b.month)}</th><th className="num">Change</th></tr></thead>
           <tbody>{rows.map(([l, x, y]) => <tr key={l}><th scope="row">{l}</th><td className="num">{money(x)}</td><td className="num">{money(y)}</td><td className={`num delta${y - x ? '' : ' muted'}`}>{money(y - x, { sign: true })}</td></tr>)}</tbody>

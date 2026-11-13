@@ -10,7 +10,7 @@ Trust accounting rules (ABA Model Rule 1.15 and its state versions, Law Society 
 
 ## Features
 
-- Guided import of the bank statement (CSV, OFX, QFX), the trust journal (Clio Manage trust ledger report, QuickBooks transaction detail, any CSV) and client balances (Clio trust listing report or any CSV): format detection, column mapping and a validation report with line numbers.
+- Guided import of the bank statement (CSV from Chase, Bank of America, Wells Fargo, Capital One, RBC, TD, CIBC or any bank; OFX, QFX), the trust journal (Clio Manage trust ledger report, QuickBooks Online or Desktop transaction detail, any CSV) and client balances (Clio trust listing report or any CSV): header rows found below title and summary blocks, column mapping and a validation report with line numbers.
 - Matching engine: cheque number + amount, amount + closest date, batched deposits (one bank line = several receipts), manual matches and rejections. Outstanding cheques and deposits in transit carry forward month to month.
 - Three-way tie-out: adjusted bank = trust journal = sum of client ledgers, with each difference itemised.
 - Findings: negative client balances, disbursements before the deposit cleared, transfers to operating with no matter or invoice (the Transfer vs Disburse mistake), dormant balances, bank fees and interest in trust, duplicates, stale cheques, statement gaps.
@@ -25,10 +25,16 @@ Trust accounting rules (ABA Model Rule 1.15 and its state versions, Law Society 
 npm install
 cp .env.example .env   # optional: Supabase URL and publishable key for sync
 npm run dev
-npm test               # engine tests (node --test)
+npm test               # engine tests (node --test), including fixtures in src/engine/fixtures
 npm run build
 ```
 
 Built with Vite, React and TypeScript. The reconciliation engine is plain TypeScript in `src/engine`.
+
+## Known gaps
+
+- Statement months are calendar months; banks whose statement period ends mid-month need the lines split by calendar month.
+- Clio CSV column names are matched by common names; Clio lets users rename and hide report columns, so an unusual layout may need mapping by hand once.
+- One OFX file per trust account: multi-account downloads are flagged, not split.
 
 Independent project, not affiliated with Clio. Not legal or accounting advice.
