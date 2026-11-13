@@ -1,0 +1,4 @@
+Import fixtures for the engine tests.
+
+- `*.csv`: hand-written excerpts that follow the published layouts of each bank's or QuickBooks' CSV download (title and summary blocks, header names, sign conventions, group and total rows). Names and amounts are invented.
+- `ofxparse-bank_medium.ofx`: real OFX 1.02 test file from the ofxparse project (https://github.com/jseutter/ofxparse, tests/fixtures), MIT licence, Copyright (c) 2009 Jerry Seutter.

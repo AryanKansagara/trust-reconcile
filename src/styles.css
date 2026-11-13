@@ -462,7 +462,7 @@ button.kpi:hover { border-color: var(--ink); }
 .ex-filters button { border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-pill); padding: 6px 12px; cursor: pointer; font-size: .85rem; }
 .ex-filters button[aria-pressed='true'] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .ex-list { display: grid; gap: 12px; }
-.ex { border: 1px solid var(--line); border-left: 4px solid var(--sev); border-radius: var(--r); padding: 18px 20px; background: var(--surface); display: grid; gap: 8px; }
+.ex { border: 1px solid var(--line); border-left: 4px solid var(--sev); border-radius: var(--r); padding: 18px 20px; background: var(--surface); display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .ex.critical { --sev: var(--bad); }
 .ex.warning { --sev: var(--warn); }
 .ex.info { --sev: var(--info); }
@@ -470,7 +470,7 @@ button.kpi:hover { border-color: var(--ink); }
 .ex-head h3 { margin: 0; font-size: 1.1rem; }
 .ex-amt { font-size: 1.25rem; font-weight: 300; font-variant-numeric: tabular-nums; }
 .ex p { margin: 0; color: var(--ink-2); max-width: 80ch; }
-.ex-fix { background: var(--bg-2); border-radius: var(--r-in); padding: 10px 12px; font-size: .85rem; }
+.ex-fix { background: var(--bg-2); border-radius: var(--r-in); padding: 10px 12px; font-size: .85rem; overflow-x: auto; }
 .ex-fix table { width: 100%; border-collapse: collapse; }
 .ex-fix td { padding: 3px 6px; }
 .ex-fix caption { text-align: left; font: 300 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); padding-bottom: 6px; }
@@ -596,7 +596,8 @@ button.cal-cell:hover { transform: translateY(-2px); }
   .story, .privacy-band, .onboard { grid-template-columns: 1fr; }
   .kpis { grid-template-columns: 1fr 1fr; }
   .cal { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  .docs { grid-template-columns: 1fr; }
+  .docs { grid-template-columns: minmax(0, 1fr); }
+  .docs article table.data { display: block; overflow-x: auto; }
   .docs-nav { position: static; display: flex; flex-wrap: wrap; }
 }
 @media (max-width: 760px) {

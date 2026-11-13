@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { monthEnd, monthOf } from './engine/dates.ts'
-import { assignBankIds, assignBookIds, autoMap, detect, isOfx, KINDS, parseCsv, parseOfx, statementsFromBalances, toCsv, validate, type Issue, type Kind, type Mapping } from './engine/importer.ts'
+import { assignBankIds, assignBookIds, autoMap, decodeText, detect, dropPreamble, isOfx, KINDS, parseCsv, parseOfx, statementsFromBalances, toCsv, validate, type Issue, type Kind, type Mapping } from './engine/importer.ts'
 import type { MonthRecon } from './engine/recon.ts'
 import { SAMPLES, sampleFiles } from './engine/sample.ts'
 import { EMPTY_DATASET, type BankLine, type BookEntry, type Config, type Dataset, type LedgerBalance } from './engine/types.ts'
@@ -39,15 +39,16 @@ export default function DataTab({ project, ds, update, setConfig, reload, recs }
     const next: Pending[] = []
     for (const f of [...files]) {
       if (f.size > 50_000_000) { toast(`${f.name} is over 50 MB. Export a single month instead.`, { tone: 'error' }); continue }
-      const text = await f.text()
+      const text = decodeText(await f.arrayBuffer())
       if (isOfx(text) || /\.(ofx|qfx)$/i.test(f.name)) {
         const ofx = parseOfx(text)
         next.push({ id: uuid(), name: f.name, format: /\.qfx$/i.test(f.name) || /INTU\./.test(text) ? 'QFX (Quicken / QuickBooks web connect)' : 'OFX statement', kind: 'bank', hasHeader: false, map: {}, ofx, dayFirst: false, asOf: defaultAsOf })
         continue
       }
-      const csv = parseCsv(text)
-      if (csv.rows.length < 1) { toast(`${f.name} is empty.`, { tone: 'error' }); continue }
-      const d = detect(csv.rows)
+      const parsed = parseCsv(text)
+      if (parsed.rows.length < 1) { toast(`${f.name} is empty.`, { tone: 'error' }); continue }
+      const d = detect(parsed.rows)
+      const csv = dropPreamble(parsed, d.headerRow)
       next.push({ id: uuid(), name: f.name, format: d.format, kind: d.kind, hasHeader: d.hasHeader, csv, map: d.map, dayFirst: project.config.currency === 'CAD' && looksDayFirst(csv.rows), asOf: defaultAsOf })
     }
     setPending(p => [...p, ...next])

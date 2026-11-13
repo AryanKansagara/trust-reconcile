@@ -1,0 +1,4 @@
+Account Number,Transaction Description,Transaction Date,Transaction Type,Transaction Amount,Balance
+3001,Deposit from SMITH JOHN,10/02/26,Credit,5000.00,17345.67
+3001,Check 1042,10/05/26,Debit,1235.15,16110.52
+3001,Monthly Fee,10/31/26,Debit,15.00,16095.52

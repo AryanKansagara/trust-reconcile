@@ -1,0 +1,5 @@
+,Type,Date,Num,Name,Memo,Split,Amount,Balance
+IOLTA Trust Account,,,,,,,,
+,Deposit,10/02/2026,,"Smith, John:Estate Admin",Retainer,-SPLIT-,"5,000.00","5,000.00"
+,Check,10/05/2026,1042,"Smith, John:Estate Admin",Court filing fee,Client Trust Liability,"-1,235.15","3,764.85"
+Total IOLTA Trust Account,,,,,,,"3,764.85","3,764.85"

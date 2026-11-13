@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { parseDate, parseMoney, monthEnd, addMonths } from './dates.ts'
-import { assignBankIds, assignBookIds, classify, detect, parseCsv, parseOfx, statementsFromBalances, validate } from './importer.ts'
+import { assignBankIds, assignBookIds, chequeIn, classify, decodeText, detect, dropPreamble, parseCsv, parseOfx, statementsFromBalances, validate } from './importer.ts'
 import { matchItems, subsetSum } from './match.ts'
 import { correctionRows, reconcileAll } from './recon.ts'
 import { SAMPLES, generate, sampleConfig, sampleFiles } from './sample.ts'
@@ -386,4 +387,104 @@ test('compliance calendar marks signed, unsigned and overdue months with the Ont
   assert.equal(by['2026-07'].status, 'data')
   assert.ok(!by['2026-10'].overdue)
   assert.equal(dueDate('2026-10', 'az'), '2026-11-30')
+})
+
+// ---------- Real export layouts (src/engine/fixtures) ----------
+
+const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url))
+const load = (name: string) => {
+  const parsed = parseCsv(decodeText(fixture(name)))
+  const d = detect(parsed.rows)
+  const v = validate(d.kind!, dropPreamble(parsed, d.headerRow), d.map, { hasHeader: d.hasHeader })
+  return { d, v, rows: v.rows as (BankLine & BookEntry)[], errors: v.issues.filter(i => i.level !== 'skip') }
+}
+
+test('Bank of America CSV: the summary block above the header and the beginning-balance row are skipped', () => {
+  const { d, rows, errors, v } = load('bofa.csv')
+  assert.equal(d.format, 'Bank of America CSV')
+  assert.equal(d.headerRow, 5) // blank lines are dropped by parseCsv
+  assert.deepEqual(rows.map(r => r.amount), [500000, -123515, -1500])
+  assert.equal(rows[1].ref, '1042')
+  assert.deepEqual(errors, [])
+  assert.ok(v.issues.some(i => i.line === 8 && /Balance row/.test(i.message)))
+  assert.deepEqual(statementsFromBalances(rows)['2026-10'], { opening: 1234567, closing: 1609552 })
+})
+
+test('QuickBooks Online transaction detail: title block, account group, totals and footer are skipped; Customer:Job is the ledger', () => {
+  const { d, rows, errors } = load('qbo.csv')
+  assert.equal(d.format, 'QuickBooks transaction detail')
+  assert.deepEqual(errors, [])
+  assert.equal(rows.length, 4)
+  assert.equal(rows[0].matter, 'Smith, John:Estate Admin')
+  assert.equal(rows[0].client, 'Smith, John')
+  assert.equal(rows[1].ref, '1042')
+  assert.deepEqual(rows.slice(2).map(r => [r.matter, r.kind]), [['', 'transfer'], ['', 'fee']])
+})
+
+test('QuickBooks Desktop layout (Type, Split) is read as a trust journal, not a bank statement', () => {
+  const { d, rows, errors } = load('qbd.csv')
+  assert.equal(d.kind, 'book')
+  assert.deepEqual(errors, [])
+  assert.deepEqual(rows.map(r => r.amount), [500000, -123515])
+})
+
+test('unsigned amounts with a Debit/Credit column (Capital One) come out signed', () => {
+  const { rows } = load('capitalone.csv')
+  assert.deepEqual(rows.map(r => r.amount), [500000, -123515, -1500])
+  assert.equal(rows[0].date, '2026-10-02')
+  // Chase amounts are already signed; its DEBIT/CHECK details column must not flip them again.
+  assert.deepEqual(load('chase.csv').rows.map(r => r.amount), [250000, -41000, -150000, 300000])
+})
+
+test('headerless bank files: CIBC (4 columns), TD (5 columns) and Wells Fargo all read withdrawals as negative', () => {
+  for (const f of ['cibc.csv', 'td.csv', 'wellsfargo.csv']) {
+    const { d, rows } = load(f)
+    assert.equal(d.hasHeader, false, f)
+    assert.deepEqual(rows.map(r => r.amount), [500000, -123515, -1500], f)
+    assert.equal(rows[1].ref, '1042', f)
+  }
+  const rbc = load('rbc.csv')
+  assert.equal(rbc.d.format, 'RBC Royal Bank CSV')
+  assert.equal(rbc.rows[0].desc, 'DEPOSIT IBB BRANCH')
+})
+
+test('real OFX 1.02 file (ofxparse fixture): full MEMO kept once, cheque number 0 ignored, ledger balance read', () => {
+  const r = parseOfx(fixture('ofxparse-bank_medium.ofx').toString('latin1'))
+  assert.equal(r.lines.length, 3)
+  assert.equal(r.lines[0].desc, "POS MERCHANDISE;MCDONALD'S #112")
+  assert.equal(r.lines[1].ref, '')
+  assert.equal(r.lines[1].amount, -31667)
+  assert.equal(r.closing, 38234)
+  assert.equal(r.closingDate, '2009-05-23')
+})
+
+test('OFX entities are decoded and a file with several accounts is flagged', () => {
+  const one = (n: number) => `<STMTRS><BANKTRANLIST><STMTTRN><TRNTYPE>DEBIT<DTPOSTED>2026100${n}<TRNAMT>-10.00<NAME>SMITH &amp; JONES<MEMO>CHECK #1050</BANKTRANLIST></STMTRS>`
+  const r = parseOfx(`OFXHEADER:100\n<OFX>${one(1)}${one(2)}</OFX>`)
+  assert.equal(r.lines[0].desc, 'SMITH & JONES · CHECK #1050')
+  assert.equal(r.lines[0].ref, '1050')
+  assert.ok(r.issues.some(i => /2 accounts/.test(i.message)))
+})
+
+test('cheque numbers inside bank descriptions let cheques of equal amount match the right journal entry', () => {
+  assert.equal(chequeIn('CHQ#01042-0123456'), '1042')
+  assert.equal(chequeIn('CHECK # 319'), '319')
+  assert.equal(chequeIn('REMOTE ONLINE DEPOSIT 12345'), '')
+  const csv = parseCsv('03/11/2026,CHEQUE 2213,500.00,,\n03/11/2026,CHEQUE 2212,500.00,,\n03/12/2026,DEPOSIT,,10.00,\n')
+  const bank = validate('bank', csv, detect(csv.rows).map, { hasHeader: false }).rows as BankLine[]
+  const book = ids([jr('2026-03-02', -50000, 'A', { ref: '2212' }), jr('2026-03-03', -50000, 'B', { ref: '2213' })], 'j')
+  const res = matchItems(bank, book, S)
+  const pair = Object.fromEntries(res.matches.map(m => [bank.find(b => b.id === m.bank[0])!.ref, book.find(e => e.id === m.book[0])!.ref]))
+  assert.deepEqual(pair, { 2212: '2212', 2213: '2213' })
+})
+
+test('files that are not valid UTF-8 are read as Windows-1252', () => {
+  assert.equal(decodeText(new Uint8Array([0x44, 0xe9, 0x70, 0xf4, 0x74])), 'Dépôt')
+  assert.equal(decodeText(new TextEncoder().encode('Dépôt')), 'Dépôt')
+})
+
+test('credit-union "dividend" credits on the statement are treated as trust interest', () => {
+  const ds: Dataset = { bank: assignBankIds([bk('2026-10-31', 412, 'DIVIDEND EARNED FOR PERIOD')]), book: [], balances: [] }
+  const r = reconcileAll(ds, cfg()).get('2026-10')!
+  assert.deepEqual(r.exceptions.map(e => e.kind), ['interest'])
 })

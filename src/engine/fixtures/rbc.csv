@@ -1,0 +1,4 @@
+"Account Type","Account Number","Transaction Date","Cheque Number","Description 1","Description 2","CAD$","USD$"
+Chequing,01234-5678901,10/2/2026,,"DEPOSIT","IBB BRANCH",5000.00,,
+Chequing,01234-5678901,10/5/2026,1042,"CHEQUE - 1042","",-1235.15,,
+Chequing,01234-5678901,10/31/2026,,"MONTHLY FEE","",-15.00,,

@@ -1,0 +1,15 @@
+Transaction Detail by Account
+Synthetic Law PLLC
+"October 1-31, 2026"
+
+,Date,Transaction Type,Num,Name,Memo/Description,Split,Amount,Balance
+IOLTA Trust Account,,,,,,,,
+,10/02/2026,Deposit,,"Smith, John:Estate Admin",Retainer,Client Trust Liability,"5,000.00","5,000.00"
+,10/05/2026,Check,1042,"Smith, John:Estate Admin",Court filing fee,Client Trust Liability,"-1,235.15","3,764.85"
+,10/15/2026,Transfer,,,Fees to operating,Operating Account,-500.00,"3,264.85"
+,10/31/2026,Expense,,,Monthly Maintenance Fee,Bank Charges,-15.00,"3,249.85"
+Total for IOLTA Trust Account,,,,,,,"$3,249.85",
+,,,,,,,,
+TOTAL,,,,,,,"$3,249.85",
+,,,,,,,,
+"Accrual Basis Thursday, November 5, 2026 09:14 AM GMT-05:00",,,,,,,,

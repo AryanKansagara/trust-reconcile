@@ -73,7 +73,7 @@ export interface MonthRecon {
 }
 
 const FEE = /\b(fee|fees|charge|chg|svc|service charge|nsf|overdraft|maintenance)\b/i
-const INTEREST = /interest|\bint\b|iolta int/i
+const INTEREST = /interest|\bint\b|iolta int|dividend/i
 const INVOICE = /\b(inv|invoice|bill|stmt)\b\.?\s*#?\s*[a-z]*-?\d+/i
 
 export const sum = (xs: { amount: Cents }[]) => xs.reduce((a, x) => a + x.amount, 0)

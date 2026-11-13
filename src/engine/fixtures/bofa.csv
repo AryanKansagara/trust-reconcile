@@ -1,0 +1,11 @@
+Description,,Summary Amt.
+Beginning balance as of 10/01/2026,,"12,345.67"
+Total credits,,"5,000.00"
+Total debits,,"-1,250.15"
+Ending balance as of 10/31/2026,,"16,095.52"
+
+Date,Description,Amount,Running Bal.
+10/01/2026,Beginning balance as of 10/01/2026,,"12,345.67"
+10/02/2026,"Counter Credit","5,000.00","17,345.67"
+10/05/2026,"Check 1042","-1,235.15","16,110.52"
+10/31/2026,"Monthly Maintenance Fee","-15.00","16,095.52"

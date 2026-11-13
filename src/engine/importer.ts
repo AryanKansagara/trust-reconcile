@@ -1,6 +1,11 @@
 import { parseDate, parseMoney } from './dates.ts'
 import type { BankLine, BookEntry, BookKind, LedgerBalance } from './types.ts'
 
+/** UTF-8 when the bytes are valid UTF-8, otherwise Windows-1252 (older bank and OFX exports with accented names). */
+export function decodeText(bytes: ArrayBuffer | Uint8Array): string {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { return new TextDecoder('windows-1252').decode(bytes) }
+}
+
 /** RFC 4180 CSV (quotes, escaped quotes, CRLF, newlines in quotes). Also returns the line each record starts on. */
 export function parseCsv(text: string): { rows: string[][]; lines: number[] } {
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
@@ -63,7 +68,7 @@ export function parseOfx(text: string): OfxResult {
   const issues: Issue[] = []
   const tag = (block: string, name: string) => {
     const m = block.match(new RegExp(`<${name}>([^<\\r\\n]*)`, 'i'))
-    return m ? m[1].trim() : ''
+    return m ? decodeEntities(m[1].trim()) : ''
   }
   const lines: BankLine[] = []
   const re = /<STMTTRN>([\s\S]*?)(?=<\/STMTTRN>|<STMTTRN>|<\/BANKTRANLIST>)/gi
@@ -76,8 +81,10 @@ export function parseOfx(text: string): OfxResult {
     if (!date) { issues.push({ line: lineNo, message: `Transaction has no valid DTPOSTED ("${tag(b, 'DTPOSTED')}")` }); continue }
     if (Number.isNaN(amount)) { issues.push({ line: lineNo, message: `Transaction has no valid TRNAMT ("${tag(b, 'TRNAMT')}")` }); continue }
     const name = tag(b, 'NAME'), memo = tag(b, 'MEMO')
-    const desc = [name, memo].filter(Boolean).join(' · ') || tag(b, 'TRNTYPE')
-    lines.push({ id: '', line: lineNo, date, amount, ref: tag(b, 'CHECKNUM') || tag(b, 'REFNUM'), desc })
+    // NAME is capped at 32 characters, so banks often repeat it in full in MEMO.
+    const desc = (memo && name && memo.toLowerCase().includes(name.toLowerCase()) ? memo : [name, memo].filter(Boolean).join(' · ')) || tag(b, 'TRNTYPE')
+    const ref = [tag(b, 'CHECKNUM'), tag(b, 'REFNUM')].find(r => r && !/^0+$/.test(r)) ?? (amount < 0 ? chequeIn(desc) : '')
+    lines.push({ id: '', line: lineNo, date, amount, ref, desc })
   }
   const ledger = text.match(/<LEDGERBAL>([\s\S]*?)(?:<\/LEDGERBAL>|<AVAILBAL>|$)/i)
   let closing: number | undefined
@@ -87,9 +94,14 @@ export function parseOfx(text: string): OfxResult {
     if (!Number.isNaN(v)) closing = v
     closingDate = parseDate(tag(ledger[1], 'DTASOF')) ?? undefined
   }
+  const accounts = (text.match(/<(?:CC)?STMTRS>/gi) ?? []).length
+  if (accounts > 1) issues.push({ line: 1, message: `This file holds ${accounts} accounts; their transactions were combined. Download the trust account on its own.` })
   if (!lines.length && !issues.length) issues.push({ line: 1, message: 'No <STMTTRN> transactions found. Is this an OFX/QFX statement download?' })
   return { lines: withIds(lines, bankKey), closing, closingDate, issues }
 }
+
+const decodeEntities = (s: string) => s.replace(/&(amp|lt|gt|quot|apos|nbsp|#\d+);/g, (_, e: string) =>
+  e[0] === '#' ? String.fromCharCode(+e.slice(1)) : ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' } as Record<string, string>)[e])
 
 export const isOfx = (text: string) => /<OFX>|OFXHEADER/i.test(text.slice(0, 2000))
 
@@ -114,6 +126,7 @@ export const KINDS: Record<Kind, { title: string; short: string; fields: FieldSp
       F('desc2', 'Description 2', 'str', ['description_2', 'memo_2', 'additional_info']),
       F('ref', 'Cheque / reference no.', 'str', ['check_or_slip_#', 'check_number', 'cheque_number', 'check_#', 'cheque_#', 'check', 'cheque', 'reference', 'ref', 'reference_number', 'num', 'serial_number']),
       F('balance', 'Running balance', 'money', ['balance', 'running_bal.', 'running_balance', 'running_bal', 'ledger_balance']),
+      F('drcr', 'Debit / credit indicator', 'str', ['transaction_type', 'details', 'debit/credit', 'credit/debit', 'dr/cr', 'cr/dr', 'type'], false, 'For files whose amounts are all positive'),
     ],
   },
   book: {
@@ -150,7 +163,7 @@ export interface Format { id: string; kind: Kind; label: string; test(hs: Set<st
 export const FORMATS: Format[] = [
   { id: 'clio-trust-ledger', kind: 'book', label: 'Clio Manage trust ledger report', test: h => h.has('funds_in') && h.has('funds_out') && h.has('matter') },
   { id: 'clio-trust-listing', kind: 'balances', label: 'Clio Manage trust listing report', test: h => (h.has('trust_balance') || h.has('trust_funds')) && (h.has('matter') || h.has('client')) },
-  { id: 'quickbooks', kind: 'book', label: 'QuickBooks transaction detail', test: h => h.has('transaction_type') && (h.has('num') || h.has('split')) && h.has('amount') },
+  { id: 'quickbooks', kind: 'book', label: 'QuickBooks transaction detail', test: h => ((h.has('transaction_type') && h.has('num')) || ((h.has('transaction_type') || h.has('type')) && h.has('split'))) && h.has('amount') },
   { id: 'chase', kind: 'bank', label: 'Chase activity CSV', test: h => h.has('posting_date') && h.has('details') && h.has('check_or_slip_#') },
   { id: 'bofa', kind: 'bank', label: 'Bank of America CSV', test: h => h.has('running_bal.') },
   { id: 'rbc', kind: 'bank', label: 'RBC Royal Bank CSV', test: h => h.has('cheque_number') && h.has('description_1') && (h.has('cad$') || h.has('usd$')) },
@@ -173,25 +186,41 @@ export function autoMap(kind: Kind, headers: string[]): Mapping {
 }
 
 /** For files without a header row we look at the values instead. */
-function headerlessMap(sample: string[]): Mapping {
+function headerlessMap(rows: string[][]): Mapping {
+  const sample = rows[0]
   const map: Mapping = { date: 0 }
   const money = sample.map((v, i) => [i, parseMoney(v)] as const).filter(([i, v]) => i > 0 && !Number.isNaN(v) && /\d/.test(sample[i]))
   const text = sample.map((v, i) => [i, v] as const).filter(([i, v]) => i > 0 && /[a-z]{3}/i.test(v) && Number.isNaN(parseMoney(v)))
   // Wells Fargo: date, amount, *, (cheque), description. TD: date, description, withdrawal, deposit, balance.
   if (sample.length === 5 && /^\*$/.test(sample[2].trim())) { map.amount = 1; map.ref = 3; map.desc = 4; return map }
   if (text.length) map.desc = text[0][0]
-  if (sample.length >= 5 && money.length >= 2 && map.desc === 1) { map.out = 2; map.in = 3; map.balance = 4; return map }
+  // TD and CIBC: date, description, withdrawal, deposit (, balance). Exactly one of the two is filled on each row.
+  const split = map.desc === 1 && sample.length >= 4 && rows.every(r => r.length >= 4 && [r[2], r[3]].filter(v => v.trim() !== '' && !Number.isNaN(parseMoney(v))).length === 1)
+  if (split) { map.out = 2; map.in = 3; if (sample.length >= 5) map.balance = 4; return map }
   if (money.length) map.amount = money[0][0]
   return map
 }
 
-export interface Detection { kind: Kind | null; format: string; hasHeader: boolean; map: Mapping }
+export interface Detection { kind: Kind | null; format: string; hasHeader: boolean; map: Mapping; headerRow: number }
 
+/** Finds the header row: QuickBooks reports and Bank of America exports put a title or summary block above it. */
 export function detect(rows: string[][]): Detection {
+  // Callers drop rows before headerRow (see dropPreamble) so the header is always row 0 when validating.
+  for (let i = 0; i < Math.min(rows.length, 15); i++) {
+    const d = detectAt(rows.slice(i))
+    if (d.kind) return { ...d, headerRow: i }
+  }
+  return { ...detectAt(rows), headerRow: 0 }
+}
+
+/** Removes the title/summary block above the header row, keeping original line numbers. */
+export const dropPreamble = (csv: { rows: string[][]; lines: number[] }, headerRow: number) => ({ rows: csv.rows.slice(headerRow), lines: csv.lines.slice(headerRow) })
+
+function detectAt(rows: string[][]): Omit<Detection, 'headerRow'> {
   const headers = rows[0] ?? []
   const hs = new Set(headers.map(norm))
   const fmt = FORMATS.find(f => f.test(hs, headers))
-  if (fmt?.id === 'headerless-5') return { kind: 'bank', format: fmt.label, hasHeader: false, map: headerlessMap(headers) }
+  if (fmt?.id === 'headerless-5') return { kind: 'bank', format: fmt.label, hasHeader: false, map: headerlessMap(rows.slice(0, 30)) }
   if (fmt) return { kind: fmt.kind, format: fmt.label, hasHeader: true, map: autoMap(fmt.kind, headers) }
   let best: Kind | null = null
   let bestScore = 0
@@ -236,6 +265,7 @@ export function validate(kind: Kind, csv: { rows: string[][]; lines: number[] },
     const line = csv.lines[r]
     const joined = rec.join(' ').trim()
     if (SUBTOTAL.test(rec.find(c => c.trim())?.trim() ?? '')) { issues.push({ line, message: `Subtotal row skipped ("${joined.slice(0, 40)}")`, level: 'skip' }); skipped++; continue }
+    if (kind === 'bank' && rec.some(c => BALANCE_ROW.test(c.trim()))) { issues.push({ line, message: `Balance row skipped ("${joined.slice(0, 40)}")`, level: 'skip' }); skipped++; continue }
     if (kind === 'balances') {
       const matter = get(rec, 'matter'), client = get(rec, 'client')
       const bal = parseMoney(get(rec, 'balance'))
@@ -250,7 +280,9 @@ export function validate(kind: Kind, csv: { rows: string[][]; lines: number[] },
     const date = parseDate(rawDate, opts.dayFirst)
     if (!date) {
       const nonEmpty = rec.filter(c => c.trim())
-      if (kind === 'book' && nonEmpty.length === 1) { groupClient = nonEmpty[0].trim(); issues.push({ line, message: `Client heading "${groupClient.slice(0, 40)}" applied to the rows below`, level: 'skip' }); skipped++; continue }
+      if (kind === 'book' && nonEmpty.length === 1 && map.client === undefined) { groupClient = nonEmpty[0].trim(); issues.push({ line, message: `Client heading "${groupClient.slice(0, 40)}" applied to the rows below`, level: 'skip' }); skipped++; continue }
+      // Report titles, account group rows and footers ("Accrual Basis ...") have a single filled cell.
+      if (nonEmpty.length === 1) { issues.push({ line, message: `Heading row skipped ("${nonEmpty[0].trim().slice(0, 40)}")`, level: 'skip' }); skipped++; continue }
       issues.push({ line, message: rawDate ? `Date "${rawDate.slice(0, 30)}" is not a date` : 'Date is empty' }); skipped++; continue
     }
     let amount: number
@@ -265,12 +297,16 @@ export function validate(kind: Kind, csv: { rows: string[][]; lines: number[] },
     if (kind === 'bank') {
       const desc = [get(rec, 'desc'), get(rec, 'desc2')].filter(Boolean).join(' ')
       const bal = map.balance !== undefined ? parseMoney(get(rec, 'balance')) : NaN
-      out.push({ id: '', line, date, amount, ref: cleanRef(get(rec, 'ref')), desc, ...(Number.isNaN(bal) ? {} : { balance: bal }) })
+      // Some banks (Capital One, many credit unions) export unsigned amounts with a Debit/Credit column.
+      if (amount > 0 && map.amount !== undefined && DEBIT.test(get(rec, 'drcr'))) amount = -amount
+      out.push({ id: '', line, date, amount, ref: cleanRef(get(rec, 'ref')) || (amount < 0 ? chequeIn(desc) : ''), desc, ...(Number.isNaN(bal) ? {} : { balance: bal }) })
     } else {
       const desc = get(rec, 'desc'), payee = get(rec, 'payee'), type = get(rec, 'type')
-      let matter = get(rec, 'matter'), client = get(rec, 'client') || groupClient
-      // QuickBooks "Customer:Job" puts both in one column.
-      if (matter.includes(':') && !client) { const [c, ...rest] = matter.split(':'); client = c.trim(); matter = rest.join(':').trim() }
+      let client = get(rec, 'client') || groupClient
+      // Without a matter column each client (QuickBooks customer) is its own ledger.
+      const matter = map.matter === undefined ? client : get(rec, 'matter')
+      // QuickBooks "Customer:Job" names the ledger; the part before the colon is the client.
+      if (matter.includes(':') && (!client || client === matter)) client = matter.split(':')[0].trim()
       const kindOf = classify(amount, `${type} ${desc} ${payee}`)
       out.push({ id: '', line, date, amount, matter, client, ref: cleanRef(get(rec, 'ref')), desc, payee, kind: kindOf })
     }
@@ -278,6 +314,12 @@ export function validate(kind: Kind, csv: { rows: string[][]; lines: number[] },
   const rows = kind === 'bank' ? withIds(out as BankLine[], bankKey) : kind === 'book' ? withIds(out as BookEntry[], bookKey) : out
   return { rows, issues, skipped, total }
 }
+
+const DEBIT = /^(debit|dr|d|withdrawal|check|cheque|chq)$/i
+const BALANCE_ROW = /^(beginning|ending|opening|closing|starting) balance\b|^balance (?:brought )?forward/i
+
+/** Cheque number written into a bank description: "CHECK # 1042", "CHQ#01042-0123456", "Cheque 1042". */
+export const chequeIn = (desc: string) => desc.match(/\b(?:chq|cheque|check|ck)\s*(?:no\.?|#)?\s*0*(\d{3,9})\b/i)?.[1] ?? ''
 
 const cleanRef = (s: string) => s.replace(/^#|^(chq|cheque|check|ck)\s*#?/i, '').trim()
 
