@@ -334,6 +334,28 @@ function findExceptions(r: MonthRecon, book: BookEntry[], ds: Dataset, cfg: Conf
     })
   }
 
+  // Fees or interest recorded at the account level: the bank line is explained, but no ledger owns it.
+  for (const e of book.filter(e => inMonth(e.date) && (e.kind === 'fee' || e.kind === 'interest') && !e.matter)) {
+    const fee = e.kind === 'fee'
+    ex.push({
+      id: `${fee ? 'bankfee' : 'interest'}:${e.id}`, kind: fee ? 'bankfee' : 'interest', severity: fee ? 'warning' : 'info', amount: e.amount, date: e.date, bankIds: [], bookIds: [e.id],
+      title: fee ? 'Bank fee paid from trust, recorded with no ledger' : 'Interest recorded in trust with no ledger',
+      detail: fee
+        ? `"${e.desc}" (${fmt(e.amount)}) on ${e.date} is in the journal but on no client or firm ledger, so the client ledgers claim ${fmt(-e.amount)} more than the account holds. Deposit firm funds to cover it and post both entries to a firm ledger.`
+        : `${fmt(e.amount)} of interest on ${e.date} is in the journal but on no ledger. On a pooled account it belongs to the IOLTA program or law foundation: post it to an interest ledger and remit it unless the bank remits directly.`,
+      fix: fee
+        ? [
+          { date: e.date, matter: '', client: '', type: 'Reversal', amount: -e.amount, reference: e.ref, description: `Reverse account-level entry: ${e.desc}` },
+          { date: e.date, matter: 'FIRM-BANK-CHARGES', client: 'Firm', type: 'Bank charge', amount: e.amount, reference: e.ref, description: e.desc },
+          { date: e.date, matter: 'FIRM-BANK-CHARGES', client: 'Firm', type: 'Transfer from operating', amount: -e.amount, reference: 'FIRM-FUNDS', description: 'Firm funds to cover bank charge' },
+        ]
+        : [
+          { date: e.date, matter: '', client: '', type: 'Reversal', amount: -e.amount, reference: e.ref, description: `Reverse account-level entry: ${e.desc}` },
+          { date: e.date, matter: 'IOLTA-INTEREST', client: 'Interest program', type: 'Interest', amount: e.amount, reference: e.ref, description: e.desc },
+        ],
+    })
+  }
+
   // Duplicates in the journal.
   const groups = new Map<string, BookEntry[]>()
   for (const e of book.filter(e => inMonth(e.date) && e.kind !== 'opening')) {

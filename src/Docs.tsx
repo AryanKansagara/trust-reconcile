@@ -135,11 +135,11 @@ export default function Docs() {
             <tr><th scope="row">California: Rule 1.15 and the Board’s trust account standards</th><td>Monthly reconciliation (balancing) of the client ledgers, the account journal and the bank statements, with records kept for five years.</td></tr>
             <tr><th scope="row">Florida: Rule 5-1.2</th><td>Monthly reconciliation of the bank balance (with deposits in transit and outstanding checks) and a monthly comparison with the total of the client ledgers.</td></tr>
             <tr><th scope="row">Ontario: Law Society By-Law 9</th><td>A monthly comparison of the trust bank balance, the trust journal and the total of client trust ledger balances, with reasons for any difference, completed within 25 days after the end of the bank statement period.</td></tr>
-            <tr><th scope="row">British Columbia: Law Society Rule 3-73</th><td>Monthly trust reconciliation of the bank, the trust records and the client listing, completed within 30 days and signed by the lawyer.</td></tr>
+            <tr><th scope="row">British Columbia: Law Society Rule 3-73</th><td>Monthly trust reconciliation of the bank, the trust records and the client listing, prepared within 30 days of its effective date (Rule 3-73(5)) and signed by the lawyer.</td></tr>
             <tr><th scope="row">Elsewhere</th><td>Many US states now require monthly three-way reconciliation; some (for example Illinois and Colorado) set quarterly as the minimum and recommend monthly. Monthly is the safe default.</td></tr>
           </tbody>
         </table>
-        <p className="muted small">The compliance calendar treats a month as due 25 days after month end for Ontario and at the end of the following month everywhere else. Change the rules an account reports against on its Data tab.</p>
+        <p className="muted small">The compliance calendar treats a month as due 25 days after month end for Ontario, 30 days after month end for British Columbia (Rule 3-73(5); <a href="https://www.lawsociety.bc.ca/docs/trust/checklist_trust-accounting.pdf">LSBC trust accounting checklist</a>, checked November 2026) and at the end of the following month everywhere else. Change the rules an account reports against on its Data tab.</p>
 
         <h2 id="privacy">Privacy: what stays local</h2>
         <p>Files are read with the browser’s file API, parsed and reconciled in this tab, and stored in the browser’s IndexedDB. There is no upload step and no server-side processing. This matters to firms whose regulator cares about where client information is held, including Canadian firms asking about data residency.</p>

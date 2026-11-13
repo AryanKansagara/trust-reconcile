@@ -148,7 +148,7 @@ export default function Report({ id }: { id: string }) {
           </div>
         </div>
         <p className="sheet-foot">
-          Prepared with Trust Reconcile from the bank statement, trust journal and client ledger exports for the period, processed on the preparer’s device. Keep this report with the trust records for the retention period your rules require. {project.config.jurisdiction === 'on' ? 'By-Law 9 expects the monthly comparison within 25 days of the statement period end.' : ''} This is a working paper, not legal or accounting advice.
+          Prepared with Trust Reconcile from the bank statement, trust journal and client ledger exports for the period, processed on the preparer’s device. Keep this report with the trust records for the retention period your rules require. {project.config.jurisdiction === 'on' ? 'By-Law 9 expects the monthly comparison within 25 days of the statement period end.' : project.config.jurisdiction === 'bc' ? 'Rule 3-73 expects the reconciliation within 30 days of its effective date.' : ''} This is a working paper, not legal or accounting advice.
         </p>
       </article>
     </div>

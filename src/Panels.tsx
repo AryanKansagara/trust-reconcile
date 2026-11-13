@@ -244,7 +244,7 @@ function History({ project, recs, month, update }: TabProps) {
   return (
     <div className="tab-body">
       <div className="panel">
-        <div className="panel-head"><h2>Compliance calendar</h2><span className="muted small">Due {project.config.jurisdiction === 'on' ? '25 days after month end (By-Law 9)' : 'by the end of the following month'}</span></div>
+        <div className="panel-head"><h2>Compliance calendar</h2><span className="muted small">Due {project.config.jurisdiction === 'on' ? '25 days after month end (By-Law 9)' : project.config.jurisdiction === 'bc' ? '30 days after month end (Rule 3-73)' : 'by the end of the following month'}</span></div>
         <div className="cal">
           {cal.map(c => {
             const st = c.overdue ? 'overdue' : c.status

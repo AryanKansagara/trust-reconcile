@@ -433,7 +433,10 @@ test('unsigned amounts with a Debit/Credit column (Capital One) come out signed'
   assert.deepEqual(rows.map(r => r.amount), [500000, -123515, -1500])
   assert.equal(rows[0].date, '2026-10-02')
   // Chase amounts are already signed; its DEBIT/CHECK details column must not flip them again.
-  assert.deepEqual(load('chase.csv').rows.map(r => r.amount), [250000, -41000, -150000, 300000])
+  const chase = load('chase.csv').rows
+  assert.deepEqual(chase.map(r => r.amount), [250000, -41000, -150000, 300000])
+  // Newest-first file: opening is the oldest balance less its amount.
+  assert.deepEqual(statementsFromBalances(chase)['2026-10'], { opening: 632540, closing: 991540 })
 })
 
 test('headerless bank files: CIBC (4 columns), TD (5 columns) and Wells Fargo all read withdrawals as negative', () => {
@@ -487,4 +490,22 @@ test('credit-union "dividend" credits on the statement are treated as trust inte
   const ds: Dataset = { bank: assignBankIds([bk('2026-10-31', 412, 'DIVIDEND EARNED FOR PERIOD')]), book: [], balances: [] }
   const r = reconcileAll(ds, cfg()).get('2026-10')!
   assert.deepEqual(r.exceptions.map(e => e.kind), ['interest'])
+})
+
+test('due dates: Ontario 25 days, BC 30 days after month end (across February), others end of next month', () => {
+  assert.equal(dueDate('2026-01', 'bc'), '2026-03-02')
+  assert.equal(dueDate('2026-01', 'on'), '2026-02-25')
+  assert.equal(dueDate('2026-01', 'fl'), '2026-02-28')
+})
+
+test('a bank fee recorded in the journal with no ledger is matched but still reported, with a firm-funds fix', () => {
+  const bank = assignBankIds([bk('2026-10-31', -1500, 'MONTHLY SERVICE FEE')])
+  const book = ids([jr('2026-10-31', -1500, '', { desc: 'Monthly service fee', kind: 'fee' })], 'j')
+  const r = reconcileAll({ bank, book, balances: [] }, cfg({ statements: { '2026-10': { opening: 1500, closing: 0, source: 'manual' } } })).get('2026-10')!
+  assert.equal(r.matches.length, 1)
+  const fee = r.exceptions.find(e => e.kind === 'bankfee')!
+  assert.ok(fee)
+  // Applying the fix leaves the account-level total at zero and puts the net cost on the firm ledger.
+  assert.equal(fee.fix.filter(f => !f.matter).reduce((a, f) => a + f.amount, 0) + -1500, 0)
+  assert.equal(fee.fix.filter(f => f.matter === 'FIRM-BANK-CHARGES').reduce((a, f) => a + f.amount, 0), 0)
 })

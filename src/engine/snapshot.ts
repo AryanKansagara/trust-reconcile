@@ -37,11 +37,12 @@ export function cloudProject(p: Project, totalsOnly: boolean): Omit<Project, 'sn
 
 export interface CalendarCell { month: string; status: 'signed' | 'reviewed' | 'reconciled' | 'data' | 'none'; due: string; overdue: boolean; snapshot?: Snapshot }
 
-/** Days after month end the reconciliation is due: Ontario's By-Law 9 allows 25; others by firm policy (end of next month). */
+/** Due date after month end: Ontario By-Law 9 s.22 allows 25 days, BC Rule 3-73(5) 30 days; elsewhere the end of the next month (firm policy). */
 export function dueDate(month: string, jurisdiction: Config['jurisdiction']): string {
   const [y, m] = month.split('-').map(Number)
   const end = Date.UTC(y, m, 0)
-  if (jurisdiction === 'on') return new Date(end + 25 * 86400000).toISOString().slice(0, 10)
+  const days = { on: 25, bc: 30 }[jurisdiction as 'on' | 'bc']
+  if (days) return new Date(end + days * 86400000).toISOString().slice(0, 10)
   return new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0, 10)
 }
 
