@@ -37,4 +37,4 @@ Built with Vite, React and TypeScript. The reconciliation engine is plain TypeSc
 - Clio CSV column names are matched by common names; Clio lets users rename and hide report columns, so an unusual layout may need mapping by hand once.
 - One OFX file per trust account: multi-account downloads are flagged, not split.
 
-Independent project, not affiliated with Clio. Not legal or accounting advice.
+ Not legal or accounting advice.

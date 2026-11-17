@@ -290,7 +290,7 @@ export function Footer() {
       <div className="footer-inner">
         <div className="footer-brand"><Monogram /> <strong>Trust Reconcile</strong></div>
         <nav className="footer-nav" aria-label="Footer"><Link href="/app">Reconciliations</Link><Link href="/docs">Docs</Link><Link href="/docs#rules">Rules</Link><Link href="/settings">Settings</Link></nav>
-        <p>Built by Aryan Kansagara. Independent project, not affiliated with Clio.</p>
+        <p>Built by Aryan Kansagara.</p>
         <p className="muted small">Sample firms are synthetic. Statements and ledgers are processed in your browser and stored on this device. Not legal or accounting advice; your bar or law society rules govern.</p>
       </div>
     </footer>
