@@ -599,6 +599,25 @@ test('a truncated OFX statement reports line-numbered problems and does not take
   assert.equal(only.issues[0].line, 3)
 })
 
+test('a transaction cut off mid-amount is reported and never imported with a partial amount', () => {
+  const acct = (id: string, rows: string) => `<STMTTRNRS><STMTRS><BANKACCTFROM><ACCTID>${id}</BANKACCTFROM><BANKTRANLIST>\n${rows}`
+  const whole = '<STMTTRN><DTPOSTED>20261001<TRNAMT>-50.00<NAME>WHOLE</STMTTRN>\n'
+  const cut = '<STMTTRN><DTPOSTED>20261002<TRNAMT>-12'
+  const head = 'OFXHEADER:100\n<OFX><BANKMSGSRSV1>'
+  const next = acct('9999', '<STMTTRN><DTPOSTED>20261003<TRNAMT>7.00<NAME>NEXT</STMTTRN></BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>')
+  for (const text of [head + acct('1111', whole + cut), head + acct('1111', whole + cut + '\n' + next), head + whole + cut]) {
+    const [a, b] = parseOfxAccounts(text)
+    assert.deepEqual(a.lines.map(l => [l.desc, l.amount]), [['WHOLE', -5000]])
+    assert.equal(a.skipped, 1)
+    assert.ok(a.issues.some(i => /cut off and was not imported/.test(i.message) && text.split('\n')[i.line - 1].includes('<TRNAMT>-12')))
+    if (b) assert.deepEqual(b.lines.map(l => [l.desc, l.amount]), [['NEXT', 700]])
+  }
+  // A file that is not OFX keeps its own message.
+  assert.match(parseOfxAccounts('not an ofx file')[0].issues[0].message, /No <STMTTRN> transactions found/)
+  // An unclosed last row inside a closed statement is complete, so it is kept.
+  assert.equal(parseOfxAccounts(head + acct('1111', whole + '<STMTTRN><DTPOSTED>20261002<TRNAMT>-12.00</STMTRS></OFX>'))[0].lines.length, 2)
+})
+
 test('OFX credit card statements are told apart from bank accounts, and only the last four characters of an account id are kept', () => {
   const card = `<CREDITCARDMSGSRSV1><CCSTMTTRNRS><CCSTMTRS><CURDEF>USD<CCACCTFROM><ACCTID>4111222233334411</CCACCTFROM><BANKTRANLIST>
 <STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20261005<TRNAMT>-42.00<FITID>9<NAME>COFFEE</STMTTRN></BANKTRANLIST><LEDGERBAL><BALAMT>-42.00<DTASOF>20261031</LEDGERBAL></CCSTMTRS></CCSTMTTRNRS></CREDITCARDMSGSRSV1>`

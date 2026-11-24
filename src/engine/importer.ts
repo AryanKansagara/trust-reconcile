@@ -120,7 +120,7 @@ export function parseOfxAccounts(text: string): OfxAccount[] {
       const end = m.index + m[0].length
       return { kind: name === 'CCSTMTRS' ? 'creditcard' as const : 'bank' as const, start: m.index, body: m[2], bodyAt: m.index + name.length + 2, closeTag: `</${name}>`, closed: text.slice(end, end + name.length + 3).toUpperCase() === `</${name}>` }
     })
-    : [{ kind: 'bank' as const, start: 0, body: text, bodyAt: 0, closeTag: '', closed: true }]
+    : [{ kind: 'bank' as const, start: 0, body: text, bodyAt: 0, closeTag: '</OFX>', closed: /<\/OFX>/i.test(text) }]
 
   return blocks.map((blk, index) => {
     const issues: Issue[] = []
@@ -135,6 +135,8 @@ export function parseOfxAccounts(text: string): OfxAccount[] {
       const amount = parseMoney(ofxTag(b, 'TRNAMT'))
       if (!date) { issues.push({ line: lineNo, message: `Transaction has no valid DTPOSTED ("${ofxTag(b, 'DTPOSTED')}")` }); skipped++; continue }
       if (Number.isNaN(amount)) { issues.push({ line: lineNo, message: `Transaction has no valid TRNAMT ("${ofxTag(b, 'TRNAMT')}")` }); skipped++; continue }
+      // Cut off mid-transaction: the amount may be a fragment ("-12" of "-1234.00"), so it cannot be trusted.
+      if (!blk.closed && re.lastIndex === blk.body.length) { issues.push({ line: lineNo, message: 'Transaction is cut off and was not imported' }); skipped++; continue }
       const name = ofxTag(b, 'NAME'), memo = ofxTag(b, 'MEMO')
       // NAME is capped at 32 characters, so banks often repeat it in full in MEMO.
       const desc = (memo && name && memo.toLowerCase().includes(name.toLowerCase()) ? memo : [name, memo].filter(Boolean).join(' · ')) || ofxTag(b, 'TRNTYPE')
@@ -154,7 +156,7 @@ export function parseOfxAccounts(text: string): OfxAccount[] {
     }
     const line = lineAt(blk.start)
     const who = last4 ? `account ending ${last4}` : `account ${index + 1}`
-    if (!blk.closed) issues.push({ line, message: `The statement for ${who} is not closed (no ${blk.closeTag}), so the file may be cut off. Check its transactions and balance.` })
+    if (!blk.closed && found.length) issues.push({ line, message: `The statement for ${who} is not closed (no ${blk.closeTag}), so the file may be cut off. Check its transactions and balance.` })
     // An account with a balance and no activity is a valid statement.
     if (!lines.length && !issues.length && closing === undefined) issues.push({ line, message: 'No <STMTTRN> transactions found. Is this an OFX/QFX statement download?' })
     return { index, kind: blk.kind, type: blk.kind === 'bank' ? ofxTag(from, 'ACCTTYPE').toUpperCase() : '', last4, currency: ofxTag(blk.body, 'CURDEF').toUpperCase(), line, skipped, lines: withIds(lines, bankKey), closing, closingDate, issues }
