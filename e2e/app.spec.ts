@@ -1,24 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { expect, test as base, type Page } from '@playwright/test'
-
-const fixture = (name: string) => readFileSync(new URL(`../src/engine/fixtures/${name}`, import.meta.url))
-
-/**
- * Every test runs signed out in a fresh browser context (so empty IndexedDB), with Supabase blocked.
- * A test fails if the page throws an uncaught error or anything tries to reach Supabase.
- */
-const test = base.extend<{ guard: { errors: string[]; supabase: string[] } }>({
-  guard: [async ({ context, page }, use) => {
-    const errors: string[] = []
-    const supabase: string[] = []
-    page.on('pageerror', e => errors.push(e.message))
-    await context.route(/supabase\.(co|in)/, route => { supabase.push(route.request().url()); return route.abort() })
-    const guard = { errors, supabase }
-    await use(guard)
-    expect(errors, 'uncaught page errors').toEqual([])
-    expect(supabase, 'requests to Supabase while signed out').toEqual([])
-  }, { auto: true }],
-})
+import { type Page } from '@playwright/test'
+import { expect, fixture, test } from './support.ts'
 
 async function openSample(page: Page, id: 'reyes' | 'marlowe') {
   await page.goto(`/app?sample=${id}`)

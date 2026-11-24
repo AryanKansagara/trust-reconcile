@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { parseDate, parseMoney, monthEnd, addMonths } from './dates.ts'
-import { assignBankIds, assignBookIds, chequeIn, classify, decodeText, detect, dropPreamble, parseCsv, parseOfx, statementsFromBalances, validate } from './importer.ts'
+import { assignBankIds, assignBookIds, chequeIn, classify, decodeText, detect, dropPreamble, ofxAccountLabel, parseCsv, parseOfx, parseOfxAccounts, statementsFromBalances, validate } from './importer.ts'
 import { matchItems, subsetSum } from './match.ts'
 import { correctionRows, reconcileAll } from './recon.ts'
 import { SAMPLES, generate, sampleConfig, sampleFiles } from './sample.ts'
@@ -508,4 +508,120 @@ test('a bank fee recorded in the journal with no ledger is matched but still rep
   // Applying the fix leaves the account-level total at zero and puts the net cost on the firm ledger.
   assert.equal(fee.fix.filter(f => !f.matter).reduce((a, f) => a + f.amount, 0) + -1500, 0)
   assert.equal(fee.fix.filter(f => f.matter === 'FIRM-BANK-CHARGES').reduce((a, f) => a + f.amount, 0), 0)
+})
+
+// ---------- OFX with several accounts ----------
+
+const accountsOf = (name: string) => parseOfxAccounts(fixture(name).toString('latin1'))
+
+test('OFX SGML file with two accounts: each account keeps its own lines, balance and label', () => {
+  const [trust, operating] = accountsOf('two-accounts-sgml.ofx')
+  assert.deepEqual([trust.index, operating.index], [0, 1])
+  assert.deepEqual([trust.kind, trust.type, trust.last4, trust.currency], ['bank', 'CHECKING', '0042', 'USD'])
+  assert.deepEqual([operating.kind, operating.type, operating.last4], ['bank', 'CHECKING', '0077'])
+  assert.deepEqual(trust.lines.map(l => l.amount), [250000, -41000, -150000, 300000])
+  assert.deepEqual(operating.lines.map(l => l.amount), [820000, -315000, 150000, -74218])
+  assert.equal(trust.closing, 990000)
+  assert.equal(operating.closing, 4125077)
+  assert.equal(trust.closingDate, '2026-10-31')
+  assert.equal(trust.lines[1].ref, '1043')
+  assert.equal(trust.lines.some(l => /LEASE|PAYROLL/.test(l.desc)), false)
+  assert.equal(operating.lines.some(l => /CHECK 1043|DEPOSIT ID/.test(l.desc)), false)
+  assert.deepEqual([trust.issues, operating.issues], [[], []])
+  assert.equal(ofxAccountLabel(trust), 'Checking account ending 0042')
+})
+
+test('OFX accounts that reuse the same FITIDs, or even identical rows, neither collide nor deduplicate each other', () => {
+  const text = fixture('two-accounts-sgml.ofx').toString('latin1')
+  const fitids = [...text.matchAll(/<FITID>(\d+)/g)].map(m => m[1])
+  assert.equal(fitids.length, 8)
+  assert.equal(new Set(fitids).size, 4, 'the fixture reuses every FITID in both accounts')
+  const [a, b] = parseOfxAccounts(text)
+  assert.equal(a.lines.length, 4)
+  assert.equal(b.lines.length, 4)
+  // Two accounts holding identical transactions still each keep all of theirs, with distinct ids inside the account.
+  const same = (acct: string) => `<STMTTRNRS><STMTRS><BANKACCTFROM><BANKID>1<ACCTID>${acct}<ACCTTYPE>CHECKING</BANKACCTFROM><BANKTRANLIST>
+<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20261005<TRNAMT>-10.00<FITID>77<NAME>FEE</STMTTRN>
+<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20261005<TRNAMT>-10.00<FITID>77<NAME>FEE</STMTTRN>
+</BANKTRANLIST><LEDGERBAL><BALAMT>80.00<DTASOF>20261031</LEDGERBAL></STMTRS></STMTTRNRS>`
+  const [x, y] = parseOfxAccounts(`OFXHEADER:100\n<OFX><BANKMSGSRSV1>${same('1111')}${same('2222')}</BANKMSGSRSV1></OFX>`)
+  for (const acct of [x, y]) {
+    assert.equal(acct.lines.length, 2)
+    assert.equal(new Set(acct.lines.map(l => l.id)).size, 2)
+  }
+  assert.deepEqual([x.last4, y.last4], ['1111', '2222'])
+  assert.equal(parseOfx(`OFXHEADER:100\n<OFX><BANKMSGSRSV1>${same('1111')}${same('2222')}</BANKMSGSRSV1></OFX>`).lines.length, 4)
+})
+
+test('OFX 2.x XML file: indented elements, another account in BANKACCTTO ignored, account with a balance and no transactions', () => {
+  const [checking, savings] = accountsOf('two-accounts-xml.ofx')
+  assert.deepEqual([checking.type, checking.last4, checking.currency], ['CHECKING', '0042', 'CAD'])
+  assert.deepEqual(checking.lines.map(l => [l.date, l.amount, l.ref]), [['2026-10-05', 400000, ''], ['2026-10-14', -125050, '2210']])
+  assert.equal(checking.lines[0].desc, 'E-TRANSFER DEPOSIT · Retainer, synthetic client')
+  assert.equal(checking.closing, 274950)
+  assert.equal(checking.closingDate, '2026-10-31')
+  assert.equal(checking.issues.length, 0)
+  assert.deepEqual([savings.type, savings.last4], ['SAVINGS', '0177'])
+  assert.deepEqual(savings.lines, [])
+  assert.equal(savings.closing, 125000)
+  assert.equal(savings.closingDate, '2026-10-31')
+  assert.deepEqual(savings.issues, [], 'a balance without activity is a valid statement')
+})
+
+test('a truncated OFX statement reports line-numbered problems and does not take in the next account', () => {
+  const file = [
+    'OFXHEADER:100',                                                                  // 1
+    '<OFX><BANKMSGSRSV1>',                                                            // 2
+    '<STMTTRNRS><STMTRS><CURDEF>USD<BANKACCTFROM><BANKID>1<ACCTID>5550001111<ACCTTYPE>CHECKING</BANKACCTFROM>', // 3
+    '<BANKTRANLIST>',                                                                 // 4
+    '<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>20261001<TRNAMT>100.00<FITID>1<NAME>FIRST</STMTTRN>', // 5
+    '<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20261002',                                      // 6 (cut off here)
+    '<STMTTRNRS><STMTRS><CURDEF>USD<BANKACCTFROM><BANKID>1<ACCTID>5550002222<ACCTTYPE>CHECKING</BANKACCTFROM>', // 7
+    '<BANKTRANLIST>',                                                                 // 8
+    '<STMTTRN><TRNTYPE>CREDIT<DTPOSTED>20261003<TRNAMT>7.00<FITID>2<NAME>SECOND</STMTTRN>',  // 9
+    '</BANKTRANLIST><LEDGERBAL><BALAMT>7.00<DTASOF>20261031</LEDGERBAL></STMTRS></STMTTRNRS>', // 10
+    '</BANKMSGSRSV1></OFX>',
+  ].join('\n')
+  const [a, b] = parseOfxAccounts(file)
+  assert.deepEqual(a.lines.map(l => l.desc), ['FIRST'])
+  assert.equal(a.closing, undefined)
+  assert.equal(a.skipped, 1)
+  assert.deepEqual(a.issues.map(i => i.line).sort(), [3, 6])
+  assert.ok(a.issues.some(i => i.line === 6 && /no valid TRNAMT/.test(i.message)))
+  assert.ok(a.issues.some(i => i.line === 3 && /ending 1111 is not closed/.test(i.message)))
+  assert.deepEqual(b.lines.map(l => [l.desc, l.amount, l.line]), [['SECOND', 700, 9]])
+  assert.equal(b.closing, 700)
+  assert.deepEqual(b.issues, [])
+  // A statement that ends at the end of the file is cut off too, and its complete rows are kept.
+  const [only] = parseOfxAccounts(file.split('\n').slice(0, 5).join('\n'))
+  assert.equal(only.lines.length, 1)
+  assert.equal(only.issues.length, 1)
+  assert.equal(only.issues[0].line, 3)
+})
+
+test('OFX credit card statements are told apart from bank accounts, and only the last four characters of an account id are kept', () => {
+  const card = `<CREDITCARDMSGSRSV1><CCSTMTTRNRS><CCSTMTRS><CURDEF>USD<CCACCTFROM><ACCTID>4111222233334411</CCACCTFROM><BANKTRANLIST>
+<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20261005<TRNAMT>-42.00<FITID>9<NAME>COFFEE</STMTTRN></BANKTRANLIST><LEDGERBAL><BALAMT>-42.00<DTASOF>20261031</LEDGERBAL></CCSTMTRS></CCSTMTTRNRS></CREDITCARDMSGSRSV1>`
+  const text = `OFXHEADER:100\n<OFX>${fixture('two-accounts-sgml.ofx').toString('latin1').match(/<BANKMSGSRSV1>[\s\S]*<\/BANKMSGSRSV1>/)![0]}${card}</OFX>`
+  const accounts = parseOfxAccounts(text)
+  assert.deepEqual(accounts.map(a => a.kind), ['bank', 'bank', 'creditcard'])
+  assert.equal(accounts[2].last4, '4411')
+  assert.equal(accounts[2].type, '')
+  assert.equal(ofxAccountLabel(accounts[2]), 'Credit card ending 4411')
+  assert.deepEqual(accounts.map(a => a.lines.length), [4, 4, 1])
+  const dump = JSON.stringify(accounts) + accounts.map(ofxAccountLabel).join()
+  for (const full of ['000912340042', '000912340077', '4111222233334411', '123456789']) assert.equal(dump.includes(full), false, `${full} must not be kept`)
+  assert.equal(ofxAccountLabel({ index: 1, kind: 'bank', type: '', last4: '' }), 'Bank account 2 (no account number in the file)')
+})
+
+test('single-account OFX results are the same as before: parseOfx equals the one account, and an empty download is still flagged', () => {
+  const text = fixture('ofxparse-bank_medium.ofx').toString('latin1')
+  const accounts = parseOfxAccounts(text)
+  assert.equal(accounts.length, 1)
+  assert.equal(accounts[0].last4, '5678')
+  assert.equal(accounts[0].type, 'CHECKING')
+  assert.deepEqual(parseOfx(text), { lines: accounts[0].lines, closing: 38234, closingDate: '2009-05-23', issues: [] })
+  const junk = parseOfx('OFXHEADER:100\n<OFX></OFX>')
+  assert.deepEqual(junk.issues, [{ line: 1, message: 'No <STMTTRN> transactions found. Is this an OFX/QFX statement download?' }])
+  assert.equal(parseOfxAccounts('not ofx at all').length, 1)
 })

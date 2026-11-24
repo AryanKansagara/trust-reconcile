@@ -10,7 +10,7 @@ Trust accounting rules (ABA Model Rule 1.15 and its state versions, Law Society 
 
 ## Features
 
-- Guided import of the bank statement (CSV from Chase, Bank of America, Wells Fargo, Capital One, RBC, TD, CIBC or any bank; OFX, QFX), the trust journal (Clio Manage trust ledger report, QuickBooks Online or Desktop transaction detail, any CSV) and client balances (Clio trust listing report or any CSV): header rows found below title and summary blocks, column mapping and a validation report with line numbers.
+- Guided import of the bank statement (CSV from Chase, Bank of America, Wells Fargo, Capital One, RBC, TD, CIBC or any bank; OFX, QFX, including downloads that hold several accounts, where you choose the trust account), the trust journal (Clio Manage trust ledger report, QuickBooks Online or Desktop transaction detail, any CSV) and client balances (Clio trust listing report or any CSV): header rows found below title and summary blocks, column mapping and a validation report with line numbers.
 - Matching engine: cheque number + amount, amount + closest date, batched deposits (one bank line = several receipts), manual matches and rejections. Outstanding cheques and deposits in transit carry forward month to month.
 - Three-way tie-out: adjusted bank = trust journal = sum of client ledgers, with each difference itemised.
 - Findings: negative client balances, disbursements before the deposit cleared, transfers to operating with no matter or invoice (the Transfer vs Disburse mistake), dormant balances, bank fees and interest in trust, duplicates, stale cheques, statement gaps.
@@ -39,6 +39,6 @@ Built with Vite, React and TypeScript. The reconciliation engine is plain TypeSc
 
 - Statement months are calendar months; banks whose statement period ends mid-month need the lines split by calendar month.
 - Clio CSV column names are matched by common names; Clio lets users rename and hide report columns, so an unusual layout may need mapping by hand once.
-- One OFX file per trust account: multi-account downloads are flagged, not split.
+- One trust account per project. An OFX/QFX download with several accounts asks which one is the trust account and imports only that one; to reconcile a second trust account, make a second project and import its account from the same file again.
 
  Not legal or accounting advice.

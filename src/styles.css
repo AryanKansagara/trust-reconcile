@@ -516,6 +516,15 @@ button.cal-cell:hover { transform: translateY(-2px); }
 .issues li { display: flex; gap: 10px; }
 .issues li .mono { color: var(--ink-3); min-width: 64px; }
 .issues li.skip { color: var(--ink-3); }
+.acct-pick { border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px 14px; margin: 0; display: grid; gap: 8px; min-width: 0; }
+.acct-pick legend { padding: 0 6px; font-weight: 500; }
+.acct-opt { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; }
+.acct-opt:hover { border-color: var(--ink-3); }
+.acct-opt.on { border-color: var(--ink); background: var(--stone); }
+.acct-opt.off { opacity: .6; cursor: not-allowed; }
+.acct-opt input { margin-top: 4px; }
+.acct-opt strong { display: block; font-weight: 500; }
+.acct-opt small { display: block; color: var(--ink-3); margin-top: 2px; }
 
 /* Docs */
 .docs { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; max-width: var(--max); margin: 0 auto; padding: 48px 24px 0; }

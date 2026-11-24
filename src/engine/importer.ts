@@ -63,41 +63,114 @@ export function toCsv(rows: (string | number)[][]): string {
 
 export interface OfxResult { lines: BankLine[]; closing?: number; closingDate?: string; issues: Issue[] }
 
-/** Parses OFX 1.x (SGML, unclosed tags) and OFX 2.x (XML). QFX is OFX with an Intuit header. */
+/**
+ * One statement response of an OFX file: a bank statement (`STMTRS`, with `BANKACCTFROM`) or a credit card
+ * statement (`CCSTMTRS`, with `CCACCTFROM`). Sections 11.3 and 11.4 of the OFX specification define both.
+ * Everything here belongs to this statement only: lines, ledger balance and problems never mix with another account's.
+ */
+export interface OfxAccount extends OfxResult {
+  /** Position of the statement in the file, from 0. */
+  index: number
+  kind: 'bank' | 'creditcard'
+  /** `ACCTTYPE` of a bank account (CHECKING, SAVINGS, MONEYMRKT, CREDITLINE, CD); empty for cards or when the file omits it. */
+  type: string
+  /** Last four characters of `ACCTID`. The full account number is not kept. */
+  last4: string
+  currency: string
+  /** Line the statement starts on. */
+  line: number
+  /** Transactions dropped because they were unreadable. */
+  skipped: number
+}
+
+const OFX_TYPES: Record<string, string> = { CHECKING: 'Checking', SAVINGS: 'Savings', MONEYMRKT: 'Money market', CREDITLINE: 'Credit line', CD: 'Certificate of deposit' }
+
+/** "Checking account ending 0042": all a person needs to tell accounts apart, and never more than the last four characters. */
+export function ofxAccountLabel(a: Pick<OfxAccount, 'index' | 'kind' | 'type' | 'last4'>): string {
+  const what = a.kind === 'creditcard' ? 'Credit card' : OFX_TYPES[a.type] ? `${OFX_TYPES[a.type]} account` : 'Bank account'
+  return a.last4 ? `${what} ending ${a.last4}` : `${what} ${a.index + 1} (no account number in the file)`
+}
+
+// A statement runs to its own closing tag, or stops where the next statement or message set starts, so a block
+// that is cut off cannot take in the next account's rows.
+const STATEMENT = /<(STMTRS|CCSTMTRS)>([\s\S]*?)(?=<\/\1>|<(?:STMTRS|CCSTMTRS|STMTTRNRS|CCSTMTTRNRS)>|<\/(?:BANKMSGSRSV1|CREDITCARDMSGSRSV1|OFX)>|$)/gi
+
+/** Values of an OFX element: SGML (`<NAME>value`, no closing tag) and XML (`<NAME>value</NAME>`, possibly on its own line). */
+const ofxTag = (block: string, name: string) => {
+  const m = block.match(new RegExp(`<${name}>\\s*([^<\\r\\n]*)`, 'i'))
+  return m ? decodeEntities(m[1].trim()) : ''
+}
+
+/**
+ * Parses OFX 1.x (SGML, unclosed tags) and OFX 2.x (XML), one result per statement in file order.
+ * QFX is OFX with an Intuit header. A file without statement wrappers is read as a single bank statement.
+ */
+export function parseOfxAccounts(text: string): OfxAccount[] {
+  const newlines: number[] = []
+  for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) newlines.push(i)
+  const lineAt = (pos: number) => {
+    let lo = 0, hi = newlines.length
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (newlines[mid] < pos) lo = mid + 1; else hi = mid }
+    return lo + 1
+  }
+  const found = [...text.matchAll(STATEMENT)]
+  const blocks = found.length
+    ? found.map(m => {
+      const name = m[1].toUpperCase()
+      const end = m.index + m[0].length
+      return { kind: name === 'CCSTMTRS' ? 'creditcard' as const : 'bank' as const, start: m.index, body: m[2], bodyAt: m.index + name.length + 2, closeTag: `</${name}>`, closed: text.slice(end, end + name.length + 3).toUpperCase() === `</${name}>` }
+    })
+    : [{ kind: 'bank' as const, start: 0, body: text, bodyAt: 0, closeTag: '', closed: true }]
+
+  return blocks.map((blk, index) => {
+    const issues: Issue[] = []
+    const lines: BankLine[] = []
+    let skipped = 0
+    const re = /<STMTTRN>([\s\S]*?)(?=<\/STMTTRN>|<STMTTRN>|<\/BANKTRANLIST>|$)/gi
+    let m: RegExpExecArray | null
+    while ((m = re.exec(blk.body))) {
+      const b = m[1]
+      const lineNo = lineAt(blk.bodyAt + m.index)
+      const date = parseDate(ofxTag(b, 'DTPOSTED'))
+      const amount = parseMoney(ofxTag(b, 'TRNAMT'))
+      if (!date) { issues.push({ line: lineNo, message: `Transaction has no valid DTPOSTED ("${ofxTag(b, 'DTPOSTED')}")` }); skipped++; continue }
+      if (Number.isNaN(amount)) { issues.push({ line: lineNo, message: `Transaction has no valid TRNAMT ("${ofxTag(b, 'TRNAMT')}")` }); skipped++; continue }
+      const name = ofxTag(b, 'NAME'), memo = ofxTag(b, 'MEMO')
+      // NAME is capped at 32 characters, so banks often repeat it in full in MEMO.
+      const desc = (memo && name && memo.toLowerCase().includes(name.toLowerCase()) ? memo : [name, memo].filter(Boolean).join(' · ')) || ofxTag(b, 'TRNTYPE')
+      const ref = [ofxTag(b, 'CHECKNUM'), ofxTag(b, 'REFNUM')].find(r => r && !/^0+$/.test(r)) ?? (amount < 0 ? chequeIn(desc) : '')
+      lines.push({ id: '', line: lineNo, date, amount, ref, desc })
+    }
+    // Only this statement's own account block (a transaction can carry another account in BANKACCTTO).
+    const from = blk.body.match(/<(BANKACCTFROM|CCACCTFROM)>([\s\S]*?)(?=<\/\1>|<BANKTRANLIST>|<LEDGERBAL>|$)/i)?.[2] ?? ''
+    const last4 = ofxTag(from, 'ACCTID').replace(/\s+/g, '').slice(-4)
+    const ledger = blk.body.match(/<LEDGERBAL>([\s\S]*?)(?:<\/LEDGERBAL>|<AVAILBAL>|$)/i)
+    let closing: number | undefined
+    let closingDate: string | undefined
+    if (ledger) {
+      const v = parseMoney(ofxTag(ledger[1], 'BALAMT'))
+      if (!Number.isNaN(v)) closing = v
+      closingDate = parseDate(ofxTag(ledger[1], 'DTASOF')) ?? undefined
+    }
+    const line = lineAt(blk.start)
+    const who = last4 ? `account ending ${last4}` : `account ${index + 1}`
+    if (!blk.closed) issues.push({ line, message: `The statement for ${who} is not closed (no ${blk.closeTag}), so the file may be cut off. Check its transactions and balance.` })
+    // An account with a balance and no activity is a valid statement.
+    if (!lines.length && !issues.length && closing === undefined) issues.push({ line, message: 'No <STMTTRN> transactions found. Is this an OFX/QFX statement download?' })
+    return { index, kind: blk.kind, type: blk.kind === 'bank' ? ofxTag(from, 'ACCTTYPE').toUpperCase() : '', last4, currency: ofxTag(blk.body, 'CURDEF').toUpperCase(), line, skipped, lines: withIds(lines, bankKey), closing, closingDate, issues }
+  })
+}
+
+/**
+ * The whole file as one result. Several accounts are combined and flagged, so this is only for callers that
+ * cannot ask which account to use; the importer reads each account on its own with {@link parseOfxAccounts}.
+ */
 export function parseOfx(text: string): OfxResult {
-  const issues: Issue[] = []
-  const tag = (block: string, name: string) => {
-    const m = block.match(new RegExp(`<${name}>([^<\\r\\n]*)`, 'i'))
-    return m ? decodeEntities(m[1].trim()) : ''
-  }
-  const lines: BankLine[] = []
-  const re = /<STMTTRN>([\s\S]*?)(?=<\/STMTTRN>|<STMTTRN>|<\/BANKTRANLIST>)/gi
-  let m: RegExpExecArray | null
-  while ((m = re.exec(text))) {
-    const b = m[1]
-    const lineNo = text.slice(0, m.index).split('\n').length
-    const date = parseDate(tag(b, 'DTPOSTED'))
-    const amount = parseMoney(tag(b, 'TRNAMT'))
-    if (!date) { issues.push({ line: lineNo, message: `Transaction has no valid DTPOSTED ("${tag(b, 'DTPOSTED')}")` }); continue }
-    if (Number.isNaN(amount)) { issues.push({ line: lineNo, message: `Transaction has no valid TRNAMT ("${tag(b, 'TRNAMT')}")` }); continue }
-    const name = tag(b, 'NAME'), memo = tag(b, 'MEMO')
-    // NAME is capped at 32 characters, so banks often repeat it in full in MEMO.
-    const desc = (memo && name && memo.toLowerCase().includes(name.toLowerCase()) ? memo : [name, memo].filter(Boolean).join(' · ')) || tag(b, 'TRNTYPE')
-    const ref = [tag(b, 'CHECKNUM'), tag(b, 'REFNUM')].find(r => r && !/^0+$/.test(r)) ?? (amount < 0 ? chequeIn(desc) : '')
-    lines.push({ id: '', line: lineNo, date, amount, ref, desc })
-  }
-  const ledger = text.match(/<LEDGERBAL>([\s\S]*?)(?:<\/LEDGERBAL>|<AVAILBAL>|$)/i)
-  let closing: number | undefined
-  let closingDate: string | undefined
-  if (ledger) {
-    const v = parseMoney(tag(ledger[1], 'BALAMT'))
-    if (!Number.isNaN(v)) closing = v
-    closingDate = parseDate(tag(ledger[1], 'DTASOF')) ?? undefined
-  }
-  const accounts = (text.match(/<(?:CC)?STMTRS>/gi) ?? []).length
-  if (accounts > 1) issues.push({ line: 1, message: `This file holds ${accounts} accounts; their transactions were combined. Download the trust account on its own.` })
-  if (!lines.length && !issues.length) issues.push({ line: 1, message: 'No <STMTTRN> transactions found. Is this an OFX/QFX statement download?' })
-  return { lines: withIds(lines, bankKey), closing, closingDate, issues }
+  const accounts = parseOfxAccounts(text)
+  if (accounts.length === 1) { const { lines, closing, closingDate, issues } = accounts[0]; return { lines, closing, closingDate, issues } }
+  const issues = accounts.flatMap(a => a.issues)
+  issues.push({ line: 1, message: `This file holds ${accounts.length} accounts; their transactions were combined. Download the trust account on its own.` })
+  return { lines: withIds(accounts.flatMap(a => a.lines), bankKey), closing: accounts[0].closing, closingDate: accounts[0].closingDate, issues }
 }
 
 const decodeEntities = (s: string) => s.replace(/&(amp|lt|gt|quot|apos|nbsp|#\d+);/g, (_, e: string) =>

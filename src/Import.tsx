@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { monthEnd, monthOf } from './engine/dates.ts'
-import { assignBankIds, assignBookIds, autoMap, decodeText, detect, dropPreamble, isOfx, KINDS, parseCsv, parseOfx, statementsFromBalances, toCsv, validate, type Issue, type Kind, type Mapping } from './engine/importer.ts'
+import { assignBankIds, assignBookIds, autoMap, decodeText, detect, dropPreamble, isOfx, KINDS, ofxAccountLabel, parseCsv, parseOfxAccounts, statementsFromBalances, toCsv, validate, type Issue, type Kind, type Mapping, type OfxAccount } from './engine/importer.ts'
 import type { MonthRecon } from './engine/recon.ts'
 import { SAMPLES, sampleFiles } from './engine/sample.ts'
 import { EMPTY_DATASET, type BankLine, type BookEntry, type Config, type Dataset, type LedgerBalance } from './engine/types.ts'
@@ -17,7 +17,11 @@ interface Pending {
   hasHeader: boolean
   csv?: ReturnType<typeof parseCsv>
   map: Mapping
-  ofx?: ReturnType<typeof parseOfx>
+  /** The statements of an OFX/QFX file, each read on its own. Held in memory only until one is imported. */
+  ofx?: OfxAccount[]
+  /** Index into `ofx` of the trust account; unset until the user chooses when the file holds several. */
+  account?: number
+  baseFormat?: string
   dayFirst: boolean
   asOf: string
 }
@@ -41,8 +45,10 @@ export default function DataTab({ project, ds, update, setConfig, reload, recs }
       if (f.size > 50_000_000) { toast(`${f.name} is over 50 MB. Export a single month instead.`, { tone: 'error' }); continue }
       const text = decodeText(await f.arrayBuffer())
       if (isOfx(text) || /\.(ofx|qfx)$/i.test(f.name)) {
-        const ofx = parseOfx(text)
-        next.push({ id: uuid(), name: f.name, format: /\.qfx$/i.test(f.name) || /INTU\./.test(text) ? 'QFX (Quicken / QuickBooks web connect)' : 'OFX statement', kind: 'bank', hasHeader: false, map: {}, ofx, dayFirst: false, asOf: defaultAsOf })
+        const ofx = parseOfxAccounts(text)
+        const format = /\.qfx$/i.test(f.name) || /INTU\./.test(text) ? 'QFX (Quicken / QuickBooks web connect)' : 'OFX statement'
+        // A single account imports as before; several wait for the user to pick the trust account.
+        next.push({ id: uuid(), name: f.name, format, baseFormat: format, kind: 'bank', hasHeader: false, map: {}, ofx, account: ofx.length === 1 ? 0 : undefined, dayFirst: false, asOf: defaultAsOf })
         continue
       }
       const parsed = parseCsv(text)
@@ -64,13 +70,18 @@ export default function DataTab({ project, ds, update, setConfig, reload, recs }
     let statements = { ...target.config.statements }
     if (p.kind === 'bank') {
       const lines = rows as BankLine[]
+      const stmt = p.ofx && p.account !== undefined ? p.ofx[p.account] : undefined
       const covered = new Set(lines.map(l => monthOf(l.date)))
+      // An account with a balance and no transactions says the month was quiet: it replaces that month's lines with none.
+      if (!lines.length && stmt?.closingDate) covered.add(monthOf(stmt.closingDate))
       next = { ...base, bank: assignBankIds([...base.bank.filter(b => !covered.has(monthOf(b.date))), ...lines].sort((a, b) => a.date.localeCompare(b.date) || a.line - b.line)) }
       const fromFile = statementsFromBalances(lines)
-      if (p.ofx?.closing !== undefined) {
-        const m = p.ofx.closingDate ? monthOf(p.ofx.closingDate) : [...covered].sort().at(-1)!
-        const movement = lines.filter(l => monthOf(l.date) === m).reduce((a, l) => a + l.amount, 0)
-        fromFile[m] = { opening: p.ofx.closing - movement, closing: p.ofx.closing }
+      if (stmt?.closing !== undefined) {
+        const m = stmt.closingDate ? monthOf(stmt.closingDate) : [...covered].sort().at(-1)
+        if (m) {
+          const movement = lines.filter(l => monthOf(l.date) === m).reduce((a, l) => a + l.amount, 0)
+          fromFile[m] = { opening: stmt.closing - movement, closing: stmt.closing }
+        }
       }
       for (const [m, v] of Object.entries(fromFile)) if (statements[m]?.source !== 'manual') statements[m] = { ...v, source: 'file' }
     } else if (p.kind === 'book') {
@@ -197,10 +208,14 @@ function looksDayFirst(rows: string[][]): boolean {
 function PendingCard({ p, onChange, onCancel, onCommit }: { p: Pending; onChange(p: Pending): void; onCancel(): void; onCommit(p: Pending, rows: (BankLine | BookEntry | LedgerBalance)[], skipped: number): void }) {
   const headers = p.csv ? (p.hasHeader ? p.csv.rows[0] : p.csv.rows[0].map((_, i) => `Column ${i + 1}`)) : []
   const first = p.csv ? p.csv.rows[p.hasHeader ? 1 : 0] ?? [] : []
+  const stmt = p.ofx && p.account !== undefined ? p.ofx[p.account] : undefined
   const v = useMemo(() => {
-    if (p.ofx) return { rows: p.ofx.lines, issues: p.ofx.issues, skipped: p.ofx.issues.length, total: p.ofx.lines.length + p.ofx.issues.length }
+    // An OFX file with several accounts shows no report until the trust account is chosen.
+    if (p.ofx) return stmt ? { rows: stmt.lines, issues: stmt.issues, skipped: stmt.skipped, total: stmt.lines.length + stmt.skipped } : null
     return p.kind && p.csv ? validate(p.kind, p.csv, p.map, { hasHeader: p.hasHeader, dayFirst: p.dayFirst, asOf: p.asOf }) : null
   }, [p])
+  // A statement with a balance and no transactions is valid: it records the month's closing balance.
+  const quiet = !!stmt && !stmt.lines.length && stmt.closing !== undefined
   const [showAll, setShowAll] = useState(false)
   const issues: Issue[] = v?.issues ?? []
   const errors = issues.filter(i => i.level !== 'skip')
@@ -221,6 +236,18 @@ function PendingCard({ p, onChange, onCancel, onCommit }: { p: Pending; onChange
       </div>
       {!p.kind ? <p className="warn-text small">The columns do not match a statement, journal or balance export we know. Pick the type, then map the columns.</p> : (
         <>
+          {p.ofx && p.ofx.length > 1 && (
+            <fieldset className="acct-pick">
+              <legend>This file holds {p.ofx.length} accounts. Which one is the trust account?</legend>
+              <p className="muted small">Nothing is imported until you choose. The other accounts are dropped with this file and never saved.</p>
+              {p.ofx.map(a => (
+                <label key={a.index} className={`acct-opt${p.account === a.index ? ' on' : ''}${a.kind === 'creditcard' ? ' off' : ''}`}>
+                  <input type="radio" name={`acct-${p.id}`} checked={p.account === a.index} disabled={a.kind === 'creditcard'} onChange={() => onChange({ ...p, account: a.index, format: `${p.baseFormat ?? p.format} · ${ofxAccountLabel(a)}` })} />
+                  <span><strong>{ofxAccountLabel(a)}</strong><small>{accountSummary(a)}</small></span>
+                </label>
+              ))}
+            </fieldset>
+          )}
           {p.csv && (
             <>
               <div className="mapping">
@@ -245,7 +272,9 @@ function PendingCard({ p, onChange, onCancel, onCommit }: { p: Pending; onChange
           {v && (
             <div className={`report ${errors.length ? (v.rows.length ? 'warn' : 'bad') : 'good'}`}>
               <div className="row between wrap gap-sm">
-                <span><b>{v.rows.length.toLocaleString()}</b> {v.rows.length === 1 ? 'row' : 'rows'} ready{dates.length ? `, ${dates[0]} to ${dates.at(-1)}` : ''}, net {money(total)}{v.skipped ? <>, <b>{v.skipped}</b> skipped</> : ''}{errors.length ? `, ${plural(errors.length, 'problem')}` : ', no problems'}</span>
+                {quiet && stmt
+                  ? <span><b>No transactions</b> in this statement; its closing balance {money(stmt.closing!)}{stmt.closingDate ? ` as of ${stmt.closingDate}` : ''} will be recorded{errors.length ? `, ${plural(errors.length, 'problem')}` : ', no problems'}</span>
+                  : <span><b>{v.rows.length.toLocaleString()}</b> {v.rows.length === 1 ? 'row' : 'rows'} ready{dates.length ? `, ${dates[0]} to ${dates.at(-1)}` : ''}, net {money(total)}{v.skipped ? <>, <b>{v.skipped}</b> skipped</> : ''}{errors.length ? `, ${plural(errors.length, 'problem')}` : ', no problems'}</span>}
                 {issues.length > 0 && <button type="button" className="btn ghost sm" onClick={() => download(`${p.name.replace(/\.\w+$/, '')}-validation.csv`, toCsv([['line', 'level', 'issue'], ...issues.map(i => [i.line, i.level ?? 'error', i.message])]))}>Download report</button>}
               </div>
               {issues.length > 0 && (
@@ -258,10 +287,20 @@ function PendingCard({ p, onChange, onCancel, onCommit }: { p: Pending; onChange
           )}
           <div className="row end gap-sm">
             <button type="button" className="btn ghost sm" onClick={onCancel}>Discard</button>
-            <button type="button" className="btn primary sm" disabled={!v || !v.rows.length} onClick={() => v && onCommit(p, v.rows as never, v.skipped)}>Import {v?.rows.length.toLocaleString()} rows</button>
+            <button type="button" className="btn primary sm" disabled={!v || (!v.rows.length && !quiet)} onClick={() => v && onCommit(p, v.rows as never, v.skipped)}>{!v ? 'Choose the trust account first' : quiet ? 'Import closing balance' : `Import ${v.rows.length.toLocaleString()} rows`}</button>
           </div>
         </>
       )}
     </div>
   )
+}
+
+function accountSummary(a: OfxAccount): string {
+  if (a.kind === 'creditcard') return 'A credit card statement cannot be the trust account.'
+  const dates = a.lines.map(l => l.date).sort()
+  const parts = [a.lines.length ? `${plural(a.lines.length, 'transaction')}, ${dates[0]} to ${dates.at(-1)}` : 'No transactions']
+  if (a.closing !== undefined) parts.push(`closing balance ${money(a.closing)}`)
+  const problems = a.issues.filter(i => i.level !== 'skip').length
+  if (problems) parts.push(plural(problems, 'problem'))
+  return parts.join(', ')
 }
