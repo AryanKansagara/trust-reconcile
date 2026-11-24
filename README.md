@@ -27,7 +27,11 @@ cp .env.example .env   # optional: Supabase URL and publishable key for sync
 npm run dev
 npm test               # engine tests (node --test), including fixtures in src/engine/fixtures
 npm run build
+npx playwright install chromium   # once
+npm run test:e2e       # builds, serves the production build with vite preview and runs the browser tests in e2e/
 ```
+
+Use `npm ci` instead of `npm install` for a clean, lockfile-exact install. The end-to-end tests run signed out with Supabase blocked; set `E2E_PORT` if port 4173 is taken. The same steps run in GitHub Actions on every pull request and push to `main` (`.github/workflows/ci.yml`).
 
 Built with Vite, React and TypeScript. The reconciliation engine is plain TypeScript in `src/engine`.
 
